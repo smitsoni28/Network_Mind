@@ -1,0 +1,324 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RelationshipStrength {
+  STRONG
+  WARM
+  COLD
+  UNKNOWN
+}
+
+enum InteractionChannel {
+  EMAIL
+  PHONE
+  MEETING
+  MESSAGE
+  NOTE
+  OTHER
+}
+
+enum InteractionDirection {
+  INBOUND
+  OUTBOUND
+  MUTUAL
+}
+
+enum ImportStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum AnalysisStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum QueryIntent {
+  GENERAL_WEB
+  NETWORK_SEARCH
+  INTRODUCTION_PATH
+  MIXED_WEB_NETWORK
+  RECONNECT
+  UNKNOWN
+}
+
+enum EvidenceType {
+  NETWORK
+  INTERACTION
+  EDGE
+  WEB
+}
+
+model Workspace {
+  id                      String        @id @default(uuid())
+  name                    String
+  webEnrichmentEnabled    Boolean       @default(false)
+  dataProcessingConsentAt DateTime?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  users                   User[]
+  contacts                Contact[]
+  interactions            Interaction[]
+  contactEdges            ContactEdge[]
+  importJobs              ImportJob[]
+  analysisRuns            AnalysisRun[]
+  conversations           Conversation[]
+  conversationMessages    ConversationMessage[]
+  feedback                Feedback[]
+  evidence                Evidence[]
+  auditLogs               AuditLog[]
+}
+
+model User {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  email        String    @unique
+  displayName  String
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  conversationMessages ConversationMessage[]
+
+  @@index([workspaceId])
+}
+
+model Contact {
+  id                   String               @id @default(uuid())
+  workspaceId          String
+  fullName             String
+  normalizedName       String
+  primaryEmail         String?
+  normalizedEmail      String?
+  primaryPhone         String?
+  normalizedPhone      String?
+  company              String?
+  normalizedCompany    String?
+  role                 String?
+  location             String?
+  tags                 String[]             @default([])
+  notes                String?
+  relationshipStrength RelationshipStrength @default(UNKNOWN)
+  lastContactAt        DateTime?
+  howMet               String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  importedAt           DateTime             @default(now())
+  source               String
+  archivedAt           DateTime?
+  workspace            Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  interactions         Interaction[]
+  outgoingEdges        ContactEdge[]        @relation("FromContact")
+  incomingEdges        ContactEdge[]        @relation("ToContact")
+  recommendations      Recommendation[]
+  evidence             Evidence[]
+
+  @@unique([workspaceId, normalizedEmail])
+  @@unique([workspaceId, normalizedPhone])
+  @@unique([workspaceId, normalizedName, normalizedCompany])
+  @@index([workspaceId, archivedAt])
+  @@index([workspaceId, company])
+  @@index([workspaceId, lastContactAt])
+}
+
+model Interaction {
+  id          String                @id @default(uuid())
+  workspaceId String
+  contactId   String
+  occurredAt  DateTime
+  channel     InteractionChannel
+  direction   InteractionDirection?
+  summary     String
+  outcome     String?
+  followUpAt  DateTime?
+  source      String
+  createdAt   DateTime              @default(now())
+  workspace   Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact     Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  evidence    Evidence[]
+
+  @@index([workspaceId, contactId, occurredAt])
+}
+
+model ContactEdge {
+  id                 String     @id @default(uuid())
+  workspaceId        String
+  fromContactId      String
+  toContactId        String?
+  externalTargetName String?
+  externalTargetType String?
+  relationshipType   String
+  evidence           String
+  source             String
+  verifiedAt         DateTime?
+  createdAt          DateTime   @default(now())
+  workspace          Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  fromContact        Contact    @relation("FromContact", fields: [fromContactId], references: [id], onDelete: Cascade)
+  toContact          Contact?   @relation("ToContact", fields: [toContactId], references: [id], onDelete: Cascade)
+  evidenceRecords    Evidence[]
+
+  @@index([workspaceId, fromContactId])
+  @@index([workspaceId, toContactId])
+  @@index([workspaceId, externalTargetName])
+}
+
+model ImportJob {
+  id           String       @id @default(uuid())
+  workspaceId  String
+  filename     String
+  status       ImportStatus @default(PENDING)
+  totalRows    Int          @default(0)
+  validRows    Int          @default(0)
+  warningRows  Int          @default(0)
+  invalidRows  Int          @default(0)
+  attemptedRows Int         @default(0)
+  importedRows  Int         @default(0)
+  skippedRows   Int         @default(0)
+  skippedSummary Json?
+  mapping      Json
+  errorSummary Json
+  createdAt    DateTime     @default(now())
+  completedAt  DateTime?
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
+
+model AnalysisRun {
+  id              String           @id @default(uuid())
+  workspaceId     String
+  query           String
+  intent          QueryIntent
+  status          AnalysisStatus   @default(PENDING)
+  createdAt       DateTime         @default(now())
+  completedAt     DateTime?
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations   Conversation[]
+  recommendations Recommendation[]
+  evidence        Evidence[]
+
+  @@index([workspaceId, createdAt])
+}
+
+model Conversation {
+  id              String                @id @default(uuid())
+  workspaceId     String
+  createdByUserId String
+  title           String
+  activeTask      Json?
+  taskHistory     Json                  @default("[]")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  archivedAt      DateTime?
+  lastAnalysisRunId String?
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUser   User                  @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  messages        ConversationMessage[]
+  lastAnalysisRun AnalysisRun?          @relation(fields: [lastAnalysisRunId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, updatedAt])
+  @@index([workspaceId, archivedAt])
+  @@index([createdByUserId])
+}
+
+model ConversationMessage {
+  id                String       @id @default(uuid())
+  conversationId    String
+  workspaceId       String
+  userId            String?
+  role              String
+  text              String
+  messageType       String       @default("TEXT")
+  intent            String?
+  structuredPayload Json?
+  createdAt         DateTime     @default(now())
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  workspace         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user              User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, conversationId, createdAt])
+  @@index([workspaceId, intent])
+}
+
+model Recommendation {
+  id                 String      @id @default(uuid())
+  analysisRunId      String
+  contactId          String
+  matchScore         Int
+  relationshipScore  Int
+  evidenceConfidence Int
+  actionabilityScore Int
+  priorityScore      Int
+  reasoning          String
+  suggestedAction    String
+  uncertainty        Json
+  evidenceIds        String[]    @default([])
+  createdAt          DateTime    @default(now())
+  analysisRun        AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  contact            Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  feedback           Feedback[]
+
+  @@unique([analysisRunId, contactId])
+  @@index([contactId])
+}
+
+model Evidence {
+  id            String       @id
+  workspaceId   String
+  analysisRunId String?
+  contactId     String?
+  interactionId String?
+  contactEdgeId String?
+  type          EvidenceType
+  source        String
+  title         String?
+  detail        String
+  url           String?
+  retrievedAt   DateTime?
+  occurredAt    DateTime?
+  confidence    Int
+  createdAt     DateTime     @default(now())
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  analysisRun   AnalysisRun? @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction   Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  contactEdge   ContactEdge? @relation(fields: [contactEdgeId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, analysisRunId])
+  @@index([contactId])
+}
+
+model Feedback {
+  id               String          @id @default(uuid())
+  workspaceId      String
+  recommendationId String?
+  query            String?
+  useful           Boolean
+  comment          String?
+  createdAt        DateTime        @default(now())
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String?
+  action      String
+  metadata    Json
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
